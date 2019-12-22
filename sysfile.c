@@ -16,6 +16,7 @@
 #include "file.h"
 #include "fcntl.h"
 
+static struct inode* create(char *path, short type, short major, short minor);
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -164,6 +165,50 @@ bad:
   return -1;
 }
 
+//mycode
+
+int
+sys_slink(void)
+{
+  char *new, *old;
+  struct inode *ip;
+  struct file *f;
+  int fd;
+  if(argstr(0,&old)<0||argstr(1,&new)<0){
+    return -1;
+  }
+  begin_op();
+  ip=create(new,T_SYM,0,0);
+  if(ip==0){
+    end_op();
+    return -1;
+  }
+
+  if((f=filealloc())==0){
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  if((fd=fdalloc(f))<0){
+    fileclose(f);
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  iunlock(ip);
+  end_op();
+  f->writable=1;
+  f->readable=1;
+  f->ip=ip;
+  f->type=FD_INODE;
+  f->off=0;
+  filewrite(f,old,strlen(old)+1);
+  return 0;
+}
+
+
+
+
 // Is the directory dp empty except for "." and ".." ?
 static int
 isdirempty(struct inode *dp)
@@ -289,7 +334,7 @@ sys_open(void)
   int fd, omode;
   struct file *f;
   struct inode *ip;
-
+  char sympath[512];
   if(argstr(0, &path) < 0 || argint(1, &omode) < 0)
     return -1;
 
@@ -307,6 +352,16 @@ sys_open(void)
       return -1;
     }
     ilock(ip);
+    if(issym(ip)==1){
+      readi(ip,sympath,0,sizeof(sympath));
+      iunlockput(ip);
+      if((ip=namei(sympath))==0){
+        end_op();
+	return -1;
+      }
+      ilock(ip);
+    }
+    
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();

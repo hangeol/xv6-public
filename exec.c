@@ -6,7 +6,6 @@
 #include "defs.h"
 #include "x86.h"
 #include "elf.h"
-
 int
 exec(char *path, char **argv)
 {
@@ -18,7 +17,7 @@ exec(char *path, char **argv)
   struct proghdr ph;
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
-
+  char sympath[512];
   begin_op();
 
   if((ip = namei(path)) == 0){
@@ -27,6 +26,19 @@ exec(char *path, char **argv)
     return -1;
   }
   ilock(ip);
+  //mycode
+  if(issym(ip)==1){
+    readi(ip,sympath,0,sizeof(sympath));
+    iunlockput(ip);
+    if((ip=namei(sympath))==0){
+      end_op();
+      cprintf("symlink exec:fail\n");
+      return -1;
+    }
+    ilock(ip);
+    //cprintf("symlink\n");
+  }
+  //end
   pgdir = 0;
 
   // Check ELF header

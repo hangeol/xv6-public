@@ -290,8 +290,10 @@ ilock(struct inode *ip)
   struct buf *bp;
   struct dinode *dip;
 
-  if(ip == 0 || ip->ref < 1)
+  if(ip == 0 || ip->ref < 1){
+    cprintf("aaref:%d\n",ip->ref);
     panic("ilock");
+  }
 
   acquiresleep(&ip->lock);
 
@@ -369,6 +371,8 @@ iunlockput(struct inode *ip)
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
+
+
 static uint
 bmap(struct inode *ip, uint bn)
 {
@@ -395,6 +399,29 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  bn -=NINDIRECT;
+  if(bn< THIRDLAYER){
+    if((addr=ip->addrs[NDIRECT+1])==0)
+      ip->addrs[NDIRECT+1]=addr=balloc(ip->dev);
+    bp=bread(ip->dev,addr);
+    a=(uint*)bp->data;
+    if((addr=a[bn/NINDIRECT])==0){
+      a[bn/NINDIRECT]=addr=balloc(ip->dev);
+      //for journaling
+      log_write(bp);
+    }
+    //release buffer
+    brelse(bp);
+    bp=bread(ip->dev,addr);
+    a=(uint*)bp->data;
+    if((addr=a[bn%NINDIRECT])==0){
+      a[bn%NINDIRECT]=addr=balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+    return addr;
+  } 
+
 
   panic("bmap: out of range");
 }
@@ -409,7 +436,9 @@ itrunc(struct inode *ip)
 {
   int i, j;
   struct buf *bp;
+  struct buf *bp2;
   uint *a;
+  uint *b;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -429,10 +458,42 @@ itrunc(struct inode *ip)
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
   }
+  
+  if(ip->addrs[NDIRECT+1]){
+    bp=bread(ip->dev,ip->addrs[NDIRECT+1]);
+    a=(uint*)bp->data;
+    for(i=0;i<128;i++){
+      if(a[i]){
+	//bread parameter??
+        bp2=bread(ip->dev,a[i]);
+        b=(uint*)bp2->data;
+	for(j=0;j<128;j++){
+	  if(b[j])
+            bfree(ip->dev,b[j]);
+	}
+	brelse(bp2);
+	bfree(ip->dev,a[i]);
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev,ip->addrs[NDIRECT+1]);
+    ip->addrs[NDIRECT+1]=0;
+  }
 
   ip->size = 0;
   iupdate(ip);
 }
+
+int
+issym(struct inode *ip){
+  if((ip->type)==T_SYM){
+    return 1;
+  }else{
+    return 2;
+  }
+
+}
+
 
 // Copy stat information from inode.
 // Caller must hold ip->lock.
